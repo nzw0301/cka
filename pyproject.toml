@@ -16,6 +16,5 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 dependencies = [
-    'numba',
     'numpy',
 ]
