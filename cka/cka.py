@@ -5,7 +5,7 @@ by Kornblith, Simon and Norouzi, Mohammad and Lee, Honglak and Hinton, Geoffrey.
 
 The modifications are as follows:
 
-1. Apply `black`
+1. Apply `black` & PyCharm's formatter
 2. Rename `center_gram` with `_center_gram`
 
 Note that when I apply `numba.jit(nopython=True)` to all functions,
@@ -109,15 +109,15 @@ def cka(gram_x, gram_y, debiased=False):
 
 
 def _debiased_dot_product_similarity_helper(
-    xty, sum_squared_rows_x, sum_squared_rows_y, squared_norm_x, squared_norm_y, n
+        xty, sum_squared_rows_x, sum_squared_rows_y, squared_norm_x, squared_norm_y, n
 ):
     """Helper for computing debiased dot product similarity (i.e. linear HSIC)."""
     # This formula can be derived by manipulating the unbiased estimator from
     # Song et al. (2007).
     return (
-        xty
-        - n / (n - 2.0) * sum_squared_rows_x.dot(sum_squared_rows_y)
-        + squared_norm_x * squared_norm_y / ((n - 1) * (n - 2))
+            xty
+            - n / (n - 2.0) * sum_squared_rows_x.dot(sum_squared_rows_y)
+            + squared_norm_x * squared_norm_y / ((n - 1) * (n - 2))
     )
 
 
@@ -181,3 +181,58 @@ def feature_space_linear_cka(features_x, features_y, debiased=False):
         )
 
     return dot_product_similarity / (normalization_x * normalization_y)
+
+
+class IncrementalCKA:
+    def __init__(self, num_layers_0, num_layers_1):
+        self.num_layers_0 = num_layers_0
+        self.num_layers_1 = num_layers_1
+        self._num_mini_batches = np.zeros((num_layers_0, num_layers_1), dtype=int)  # K in the paper
+        self._kl = np.zeros((num_layers_0, num_layers_1))
+        self._kk = np.zeros(num_layers_0)
+        self._ll = np.zeros(num_layers_1)
+
+    @staticmethod
+    def _hsic(K, L):
+        """
+        eq. 3
+
+        K: gram matrix.
+        L: gram matrix.
+        Note that the diagonal elements are zero.
+
+        """
+        n = K.shape[0]
+        first = np.trace(np.matmul(K, L))
+        second = np.sum(K) * np.sum(L) / (n - 1) / (n - 2)
+        third = 2. / (n - 2) * np.sum(K, axis=0).dot(np.sum(L, axis=0))
+        denom = n * (n - 3)
+        return 1. / denom * (first + second - third)
+
+    def increment_cka_score(self, l0, l1, features_x, features_y):
+        self._num_mini_batches[l0, l1] += 1
+
+        gram_x = gram_linear(features_x)
+        gram_y = gram_linear(features_y)
+        np.fill_diagonal(gram_x, 0)
+        np.fill_diagonal(gram_y, 0)
+
+        # only compute terms used in denom of cka
+        if l0 == 0 or l1 == 0:
+            if l0 == 0:
+                self._ll[l1] += self._hsic(gram_y, gram_y)
+            if l1 == 0:
+                self._kk[l0] += self._hsic(gram_x, gram_x)
+
+        self._kl[l0, l1] += self._hsic(gram_x, gram_y)
+
+    def cka(self):
+        K = np.min(self._num_mini_batches)
+        assert K == np.max(self._num_mini_batches)
+        cka_score = np.zeros(self._kl.shape)
+        for l0, kk in enumerate(self._kk):
+            kk = np.sqrt(kk / K)
+            for l1, ll in enumerate(self._ll):
+                denom = kk * np.sqrt(ll / K)
+                cka_score[l0, l1] = self._kl[l0, l1] / K / denom
+        return cka_score
