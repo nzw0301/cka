@@ -184,7 +184,19 @@ def feature_space_linear_cka(features_x, features_y, debiased=False):
 
 
 class IncrementalCKA:
-    def __init__(self, num_layers_0, num_layers_1):
+    def __init__(self, num_layers_0: int, num_layers_1: int) -> None:
+        """
+
+        Args:
+            num_layers_0: the number of layers in a network 0.
+            num_layers_1: the number of layers in a network 1.
+        """
+        if num_layers_0 < 1:
+            raise ValueError(f"`num_layers_0` should be positive: {num_layers_0}")
+
+        if num_layers_1 < 1:
+            raise ValueError(f"`num_layers_1` should be positive: {num_layers_1}")
+
         self.num_layers_0 = num_layers_0
         self.num_layers_1 = num_layers_1
         self._num_mini_batches = np.zeros((num_layers_0, num_layers_1), dtype=int)  # K in the paper
@@ -193,13 +205,17 @@ class IncrementalCKA:
         self._ll = np.zeros(num_layers_1)
 
     @staticmethod
-    def _hsic(K, L):
+    def _hsic(K: np.ndarray, L: np.ndarray) -> float:
         """
-        eq. 3
+        Eq. 3
 
-        K: gram matrix.
-        L: gram matrix.
+        Args:
+            K: gram matrix. The shape shape is N \times N, where N is the number of samples in a mini-batches.
+            L: gram matrix. The shape shape is N \times N.
+
         Note that the diagonal elements are zero.
+
+        Returns: HSIC_1 value between K and L.
 
         """
         n = K.shape[0]
@@ -209,26 +225,57 @@ class IncrementalCKA:
         denom = n * (n - 3)
         return 1. / denom * (first + second - third)
 
-    def increment_cka_score(self, l0, l1, features_x, features_y):
-        self._num_mini_batches[l0, l1] += 1
+    def increment_cka_score(self, index_feature_x: int, index_feature_y: int, features_x: np.ndarray,
+                            features_y: np.ndarray) -> None:
+        """
+        Update cka score between `index_feature_x` and `index_feature_y` using a mini-batch.
+        This function computes HISC_1 values defined by Eq. 3 and stores them rather than returns them.
+
+        Args:
+            index_feature_x: the index for layer in a model 0.
+            index_feature_y: the index for layer in a model 1.
+            features_x: feature representation extracted by the model 0. The shape is N \times n_features.
+            features_y: feature representation extracted by the model 1. The shape is N \times n_features.
+
+            Note that
+                - the numbers of samples of `features_x` and `features_y` should be the same.
+                - the dimensionalities of `features_x` and `features_y` can differ.
+
+        Returns:
+            None.
+
+        """
+        assert 0 <= index_feature_x <= self.num_layers_0 - 1
+        assert 0 <= index_feature_y <= self.num_layers_1 - 1
+
+        self._num_mini_batches[index_feature_x, index_feature_y] += 1
 
         gram_x = gram_linear(features_x)
         gram_y = gram_linear(features_y)
         np.fill_diagonal(gram_x, 0)
         np.fill_diagonal(gram_y, 0)
 
-        # only compute terms used in denom of cka
-        if l0 == 0 or l1 == 0:
-            if l0 == 0:
-                self._ll[l1] += self._hsic(gram_y, gram_y)
-            if l1 == 0:
-                self._kk[l0] += self._hsic(gram_x, gram_x)
+        # since computing terms used in the denom of cka can be skipped,
+        # we only compute them when either layer's index is 0.
+        if index_feature_x == 0 or index_feature_y == 0:
+            if index_feature_x == 0:
+                self._ll[index_feature_y] += self._hsic(gram_y, gram_y)
+            if index_feature_y == 0:
+                self._kk[index_feature_x] += self._hsic(gram_x, gram_x)
 
-        self._kl[l0, l1] += self._hsic(gram_x, gram_y)
+        self._kl[index_feature_x, index_feature_y] += self._hsic(gram_x, gram_y)
 
-    def cka(self):
+    def cka(self) -> np.ndarray:
+        """
+        Compute mini-batch CKA defined by Eq. 2 in the original paper.
+
+        Returns: `np.darray` whose element is cka. The shape is `num_layers_0` \times `num_layers_1`.
+
+        """
         K = np.min(self._num_mini_batches)
+
         assert K == np.max(self._num_mini_batches)
+
         cka_score = np.zeros(self._kl.shape)
         for l0, kk in enumerate(self._kk):
             kk = np.sqrt(kk / K)
