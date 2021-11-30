@@ -1,4 +1,19 @@
-# [WIP] Centered Kernel Alignment
+# Centered Kernel Alignment (CKA)
+
+This repo contains the numpy implementations of batch CAK [1] and mini-batch CKA [2]. 
+
+### Examples
+
+The mini-batch CKA example is in [`example-minibatch-cka.ipynb`](./example-minibatch-cka.ipynb).
+
+
+### Tests
+
+Please run the following command.
+
+```bash
+pytest tests
+```
 
 
 ---
